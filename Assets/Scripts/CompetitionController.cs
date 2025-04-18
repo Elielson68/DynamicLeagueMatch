@@ -6,5 +6,10 @@ using UnityEngine;
 
 public class CompetitionController : MonoBehaviour
 {
+    public MatchController CurrentMatch;
 
+    public void StartMatch()
+    {
+        CurrentMatch.StartMove();
+    }
 }

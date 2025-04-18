@@ -8,8 +8,9 @@ using UnityEngine.UI;
 
 public class MatchController : MonoBehaviour
 {
+    public bool CanSelectPlayers = true;
     public bool InitializeMatch;
-    public int[] MatchPlayersIndex = new int[2];
+    public List<int> MatchPlayersIndex = new();
     public int IndexWinner;
     public List<PlayerConfig> Players;
     public PlayerController PlayerPrefab;
@@ -17,12 +18,19 @@ public class MatchController : MonoBehaviour
     public float Distance = 2;
     public Vector3 FinalMatchPoint;
     public Vector3[] ChildsPositions;
+    public AudioSource WinMusic;
 
     private LineRenderer[] _linesRenderers;
     private bool _animationFinish;
+    public List<PlayerController> _playersCreated;
+    public List<PlayerController> PlayersSelected;
+    public GameObject FogoArtificio;
+    private CompetitionController _competitionController;
 
     IEnumerator Start()
     {
+        _competitionController = FindAnyObjectByType<CompetitionController>();
+
         if (IsValidMatch() is false)
         {
             yield break;
@@ -38,17 +46,114 @@ public class MatchController : MonoBehaviour
         transform.DOScale(1f, 2f);
         transform.DOMoveY(currentY, 2f);
 
-        yield return new WaitUntil(() => InitializeMatch);
-
-        UpdatePositions();
-
+        yield return transform.DOMoveY(currentY, 2f).WaitForKill();
         yield return new WaitForEndOfFrame();
 
-        CreateLines();
+        if (Players.Count == 1)
+        {
+            WinMusic.Play();
+            StartCoroutine(WinnerAnimationFogos());
+            yield return WinnerAnimation();
+        }
 
-        yield return new WaitUntil(() => _animationFinish);
+        UpdatePositions();
+    }
+    bool winnerAnim = true;
+    public IEnumerator WinnerAnimation()
+    {
+        while (winnerAnim)
+        {
+            FogoArtificio.SetActive(true);
+            transform.DORotate(Vector3.forward * 3, 2f);
+            yield return transform.DOScale(2f, 2f).WaitForKill();
+            transform.DORotate(Vector3.back * 3, 2f);
+            yield return transform.DOScale(1.5f, 2f).WaitForKill();
+            transform.DORotate(Vector3.up * 3, 2f);
+            yield return transform.DOScale(2.3f, 2f).WaitForKill();
+            transform.DORotate(Vector3.down * 3, 2f);
+            yield return transform.DOScale(1f, 2f).WaitForKill();
+        }
+    }
 
-        CreateNewMatch();
+    public IEnumerator WinnerAnimationFogos()
+    {
+        while (winnerAnim)
+        {
+            GameObject fogo = Instantiate(FogoArtificio);
+            var pos = fogo.transform.position;
+            fogo.transform.position = new Vector3(pos.x + Random.Range(0, 2.5f), pos.y + Random.Range(0, 2.5f), pos.z);
+            yield return new WaitForSeconds(Random.Range(0, 1f));
+        }
+    }
+    public void StartMove()
+    {
+        StartCoroutine(StartMoveRoutine());
+    }
+
+    private IEnumerator StartMoveRoutine()
+    {
+        if (_playersCreated.Count == 3)
+        {
+            yield return new WaitUntil(() => PlayersSelected.Count == 2);
+            CanSelectPlayers = false;
+            MatchPlayersIndex[0] = _playersCreated.IndexOf(PlayersSelected[0]);
+            MatchPlayersIndex[1] = _playersCreated.IndexOf(PlayersSelected[1]);
+            MatchPlayersIndex.Sort();
+            Debug.Log($"{string.Join(",", MatchPlayersIndex)}");
+
+            yield return new WaitForEndOfFrame();
+
+            CreateLines();
+
+            yield return new WaitUntil(() => _animationFinish);
+
+            CreateNewMatch();
+        }
+        else if (_playersCreated.Count == 2)
+        {
+            yield return new WaitUntil(() => IndexWinner > -1);
+            CanSelectPlayers = false;
+            yield return new WaitForEndOfFrame();
+
+            CreateLines();
+
+            yield return new WaitUntil(() => _animationFinish);
+
+            CreateNewMatch();
+        }
+
+    }
+
+    private PlayerController _lastPlayerSelected;
+
+    public void SetSelectPlayer(PlayerController player)
+    {
+        if (CanSelectPlayers is false)
+        {
+            return;
+        }
+
+        if (_playersCreated.Count == 2)
+        {
+            IndexWinner = _playersCreated.IndexOf(player);
+            _lastPlayerSelected?.SetSelected(false);
+            player.SetSelected(true);
+            _lastPlayerSelected = player;
+            return;
+        }
+
+        if (PlayersSelected.Contains(player))
+        {
+            PlayersSelected.Remove(player);
+            player.SetSelected(false);
+            return;
+        }
+
+        if (PlayersSelected.Count < 2)
+        {
+            PlayersSelected.Add(player);
+            player.SetSelected(true);
+        }
     }
 
     public void SetPlayers(List<PlayerConfig> players)
@@ -66,7 +171,8 @@ public class MatchController : MonoBehaviour
         foreach (PlayerConfig pc in Players)
         {
             var p = Instantiate(PlayerPrefab, transform);
-            p.Configure(pc);
+            _playersCreated.Add(p);
+            p.Configure(pc, this);
         }
     }
 
@@ -104,17 +210,6 @@ public class MatchController : MonoBehaviour
         MoveLinesFoward(_linesRenderers[p2], secondChildPositions);
     }
 
-    public float GetMidPointBetweenPlayers()
-    {
-        UpdatePositions();
-
-        int p1 = MatchPlayersIndex[0];
-        int p2 = MatchPlayersIndex[1];
-
-        Vector3 middlePosition = (ChildsPositions[p1] + ChildsPositions[p2]) / 2;
-        return middlePosition.y;
-    }
-
     private Vector3[] GetChildPositions(Vector3 firstChild, Vector3 secondChild)
     {
         Vector3[] positions = new Vector3[3];
@@ -134,12 +229,8 @@ public class MatchController : MonoBehaviour
 
     private void MoveLinesFoward(LineRenderer line, Vector3[] positions)
     {
-        StartCoroutine(MoveLinesRoutine(line, positions));
-    }
-
-    private IEnumerator MoveLinesRoutine(LineRenderer line, Vector3[] positions)
-    {
         _animationFinish = false;
+        SetLosers();
 
         for (int i = 0; i < 3; i++)
         {
@@ -147,8 +238,6 @@ public class MatchController : MonoBehaviour
         }
 
         Vector3 auxPos = positions[0];
-
-        yield return new WaitForSeconds(3f);
 
         DOTween.To(x => { auxPos.x = x; line.SetPosition(1, auxPos); line.SetPosition(2, auxPos); }, auxPos.x, positions[1].x, 2f)
         .OnComplete(() =>
@@ -175,13 +264,13 @@ public class MatchController : MonoBehaviour
         }
 
         var match = Instantiate(MatchPrefab, auxFinalMatch, Quaternion.identity, transform.parent);
-
+        _competitionController.CurrentMatch = match;
 
         if (Players.Count == 3)
         {
             List<PlayerConfig> nextPlayers = new() { Players[MatchPlayersIndex[0]], Players[MatchPlayersIndex[1]] };
-            match.SetPlayers(nextPlayers);
 
+            match.SetPlayers(nextPlayers);
             auxFinalMatch.y += 1.5f;
             auxFinalMatch.x += 0.5f;
             match.transform.position = auxFinalMatch;
@@ -193,10 +282,38 @@ public class MatchController : MonoBehaviour
         {
             List<PlayerConfig> nextPlayers = new() { Players[MatchPlayersIndex[IndexWinner]] };
             match.SetPlayers(nextPlayers);
-
             auxFinalMatch.y += 0.5f;
             auxFinalMatch.x += 0.5f;
             match.transform.position = auxFinalMatch;
+            return;
+        }
+    }
+
+    private void SetLosers()
+    {
+        List<PlayerController> auxP = new(_playersCreated);
+        if (Players.Count == 3)
+        {
+            List<PlayerController> elementsToRemove = new();
+
+            foreach (int i in MatchPlayersIndex)
+            {
+                elementsToRemove.Add(auxP[i]);
+            }
+
+            foreach (PlayerController el in elementsToRemove)
+            {
+                auxP.Remove(el);
+            }
+
+            auxP[0].SetPlayerLost();
+            return;
+        }
+
+        if (Players.Count == 2)
+        {
+            auxP.RemoveAt(IndexWinner);
+            auxP[0].SetPlayerLost();
             return;
         }
     }
@@ -205,7 +322,7 @@ public class MatchController : MonoBehaviour
     {
         AutomaticConfigurePlayers();
 
-        if (MatchPlayersIndex.Length > 2)
+        if (MatchPlayersIndex.Count > 2)
         {
             Debug.LogError("Só é possível realizar o Match entre 2 jogadores!");
             return false;
@@ -224,9 +341,9 @@ public class MatchController : MonoBehaviour
     {
         var l1 = MatchPlayersIndex.ToList();
 
-        for (int i = 0; i < MatchPlayersIndex.Length; i++)
+        for (int i = 0; i < MatchPlayersIndex.Count; i++)
         {
-            for (int ii = 0; ii < MatchPlayersIndex.Length; ii++)
+            for (int ii = 0; ii < MatchPlayersIndex.Count; ii++)
             {
                 if (MatchPlayersIndex[i] == MatchPlayersIndex[ii] && i != ii)
                 {
@@ -240,14 +357,12 @@ public class MatchController : MonoBehaviour
 
     private void AutomaticConfigurePlayers()
     {
-        if (MatchPlayersIndex.Length < 2)
+        if (MatchPlayersIndex.Count < 2)
         {
-            MatchPlayersIndex = new int[2];
-            MatchPlayersIndex[0] = 0;
-            MatchPlayersIndex[1] = 1;
+            MatchPlayersIndex = new() { 0, 1 };
         }
 
-        if (MatchPlayersIndex.Length == 2 && ExistSameElement())
+        if (MatchPlayersIndex.Count == 2 && ExistSameElement())
         {
             MatchPlayersIndex[0] = 0;
             MatchPlayersIndex[1] = 1;
