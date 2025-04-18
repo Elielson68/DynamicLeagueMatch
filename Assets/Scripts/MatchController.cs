@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using DG.Tweening;
 using Unity.Collections;
@@ -7,11 +8,16 @@ using UnityEngine.UI;
 
 public class MatchController : MonoBehaviour
 {
+    public bool InitializeMatch;
+    public int[] MatchPlayersIndex = new int[2];
+    public int IndexWinner;
+    public List<PlayerConfig> Players;
+    public PlayerController PlayerPrefab;
     public MatchController MatchPrefab;
     public float Distance = 2;
     public Vector3 FinalMatchPoint;
     public Vector3[] ChildsPositions;
-    public int[] MatchPlayersIndex = new int[2];
+
     private LineRenderer[] _linesRenderers;
     private bool _animationFinish;
 
@@ -22,14 +28,46 @@ public class MatchController : MonoBehaviour
             yield break;
         }
 
+        float currentY = transform.position.y;
+        transform.localScale = Vector3.zero;
+        transform.DOMoveY(0f, 0f);
+
         yield return new WaitForEndOfFrame();
 
+        CreatePlayers();
+        transform.DOScale(1f, 2f);
+        transform.DOMoveY(currentY, 2f);
+
+        yield return new WaitUntil(() => InitializeMatch);
+
         UpdatePositions();
+
+        yield return new WaitForEndOfFrame();
+
         CreateLines();
 
         yield return new WaitUntil(() => _animationFinish);
 
         CreateNewMatch();
+    }
+
+    public void SetPlayers(List<PlayerConfig> players)
+    {
+        Players = players;
+    }
+
+    public void CreatePlayers()
+    {
+        foreach (Transform child in transform)
+        {
+            Destroy(child.gameObject);
+        }
+
+        foreach (PlayerConfig pc in Players)
+        {
+            var p = Instantiate(PlayerPrefab, transform);
+            p.Configure(pc);
+        }
     }
 
     public void UpdatePositions()
@@ -96,9 +134,21 @@ public class MatchController : MonoBehaviour
 
     private void MoveLinesFoward(LineRenderer line, Vector3[] positions)
     {
+        StartCoroutine(MoveLinesRoutine(line, positions));
+    }
+
+    private IEnumerator MoveLinesRoutine(LineRenderer line, Vector3[] positions)
+    {
         _animationFinish = false;
-        line.SetPosition(0, positions[0]);
+
+        for (int i = 0; i < 3; i++)
+        {
+            line.SetPosition(i, positions[0]);
+        }
+
         Vector3 auxPos = positions[0];
+
+        yield return new WaitForSeconds(3f);
 
         DOTween.To(x => { auxPos.x = x; line.SetPosition(1, auxPos); line.SetPosition(2, auxPos); }, auxPos.x, positions[1].x, 2f)
         .OnComplete(() =>
@@ -119,26 +169,36 @@ public class MatchController : MonoBehaviour
     {
         Vector3 auxFinalMatch = FinalMatchPoint;
 
-        if (transform.childCount == 1)
+        if (Players.Count == 1)
         {
             return;
         }
 
         var match = Instantiate(MatchPrefab, auxFinalMatch, Quaternion.identity, transform.parent);
 
-        if (transform.childCount == 2)
+
+        if (Players.Count == 3)
         {
-            Destroy(match.transform.GetChild(1).gameObject);
+            List<PlayerConfig> nextPlayers = new() { Players[MatchPlayersIndex[0]], Players[MatchPlayersIndex[1]] };
+            match.SetPlayers(nextPlayers);
+
+            auxFinalMatch.y += 1.5f;
+            auxFinalMatch.x += 0.5f;
+            match.transform.position = auxFinalMatch;
+            match.MatchPrefab = MatchPrefab;
+            return;
+        }
+
+        if (Players.Count == 2)
+        {
+            List<PlayerConfig> nextPlayers = new() { Players[MatchPlayersIndex[IndexWinner]] };
+            match.SetPlayers(nextPlayers);
+
             auxFinalMatch.y += 0.5f;
             auxFinalMatch.x += 0.5f;
             match.transform.position = auxFinalMatch;
             return;
         }
-
-        auxFinalMatch.y += 1.5f;
-        auxFinalMatch.x += 0.5f;
-        match.transform.position = auxFinalMatch;
-        match.MatchPrefab = MatchPrefab;
     }
 
     private bool IsValidMatch()
@@ -198,7 +258,7 @@ public class MatchController : MonoBehaviour
     {
         foreach (LineRenderer line in _linesRenderers)
         {
-            line.SetPositions(new Vector3[3]);
+            line.SetPositions(new Vector3[3] { Vector3.zero, Vector3.zero, Vector3.zero });
         }
     }
 }
